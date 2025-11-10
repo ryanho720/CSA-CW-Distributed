@@ -28,6 +28,11 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 		}
 	}
 
+	initialAlive := worldToAliveCells(world)
+	if len(initialAlive) > 0 {
+		c.events <- CellsFlipped{CompletedTurns: 0, Cells: initialAlive}
+	}
+
 	c.events <- StateChange{CompletedTurns: 0, NewState: Executing}
 
 	client, err := rpc.Dial("tcp", p.EngineAddr)
@@ -56,6 +61,36 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 	processDone := make(chan error, 1)
 	go func() {
 		processDone <- client.Call(EngineServiceName+".Process", req, &resp)
+	}()
+
+	eventsDone := make(chan struct{})
+	go func() {
+		defer close(eventsDone)
+		for {
+			var eventsResp TurnEventsResponse
+			err := client.Call(
+				EngineServiceName+".NextTurnEvents",
+				TurnEventsRequest{SessionID: sessionID, MaxEvents: 8},
+				&eventsResp,
+			)
+			if err != nil {
+				log.Printf("[Remote] TurnEvents RPC failed: %v", err)
+				return
+			}
+			for _, evt := range eventsResp.Events {
+				if len(evt.Cells) > 0 {
+					c.events <- CellsFlipped{
+						CompletedTurns: evt.CellsCompletedTurns,
+						Cells:          evt.Cells,
+					}
+				}
+				c.events <- TurnComplete{CompletedTurns: evt.CompletedTurns}
+			}
+			if eventsResp.Done {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
 	}()
 
 	ticker := time.NewTicker(2 * time.Second)
@@ -95,6 +130,7 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 	ticker.Stop()
 	close(stopAlive)
 	<-aliveDone
+	<-eventsDone
 	if err != nil {
 		log.Printf("[Remote] Engine RPC failed: %v", err)
 		c.events <- StateChange{CompletedTurns: 0, NewState: Quitting}

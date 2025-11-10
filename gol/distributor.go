@@ -2,6 +2,7 @@ package gol
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"uk.ac.bris.cs/gameoflife/util"
@@ -23,6 +24,8 @@ func distributor(p Params, c distributorChannels) {
 		runRemoteDistributor(p, c)
 		return
 	}
+
+	log.Fatalf("Local Game of Life execution is temporarily disabled. Please provide -engine or GOL_ENGINE_ADDR to run via the remote server.")
 
 	width, height := p.ImageWidth, p.ImageHeight
 
