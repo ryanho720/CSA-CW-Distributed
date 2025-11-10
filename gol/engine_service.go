@@ -134,7 +134,7 @@ func (s *EngineService) NextTurnEvents(req TurnEventsRequest, resp *TurnEventsRe
 
 	session, ok := s.sessions[req.SessionID]
 	if !ok {
-		resp.Done = true
+		resp.Done = false
 		return nil
 	}
 
