@@ -18,7 +18,6 @@ func calculateNextState(p golParams, world [][]byte) [][]byte {
 				yn = p.imageHeight + yn
 			}
 			sum := int(world[y][xp]) + int(world[y][xn]) + int(world[yp][xp]) + int(world[yp][xn]) + int(world[yp][x]) + int(world[yn][xp]) + int(world[yn][xn]) + int(world[yn][x])
-			//fmt.Println(sum)
 			if sum < 510 && world[y][x] == 255 {
 				worldc[y][x] = 0
 			} else if sum > 765 && world[y][x] == 255 {

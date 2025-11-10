@@ -44,6 +44,12 @@ func main() {
 		10000000000,
 		"Specify the number of turns to process. Defaults to 10000000000.")
 
+	flag.StringVar(
+		&params.EngineAddr,
+		"engine",
+		"",
+		"Address of a remote Gol engine (host:port). Empty string runs locally.")
+
 	headless := flag.Bool(
 		"headless",
 		false,
