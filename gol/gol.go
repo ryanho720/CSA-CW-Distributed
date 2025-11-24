@@ -2,8 +2,8 @@ package gol
 
 import "strings"
 
-// client: go run ./engine -listen :6000
-// server: go run . -engine localhost:6000
+// client: go run . -engine <ip>:6000
+// server: go run ./engine <ip>:6000
 const (
 	defaultLocalEngineAddr = "localhost:6000"
 	defaultAwsEngineAddr   = "AWS_ENGINE_ADDR_PLACEHOLDER"
