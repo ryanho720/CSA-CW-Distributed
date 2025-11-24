@@ -1,4 +1,5 @@
 import csv
+import os
 import matplotlib
 
 matplotlib.use("Agg")  # headless backend to avoid GUI hangs
@@ -33,11 +34,11 @@ def load_benchstat_csv(path: str) -> pd.DataFrame:
 
 
 def parse_threads_benchmark(name: str) -> tuple[str, int]:
-    """Extract (label, workers) from BenchmarkRunTurnThreads/64x64_threads_4-8."""
+    """Extract (label, workers) from BenchmarkRunTurnThreads/64x64_threads_4-8 or BenchmarkRemoteProcess_VaryWorkers/4_workers-8."""
     base = name
     if "-" in base:
         base = base.rsplit("-", 1)[0]  # drop "-8"
-    # expect BenchmarkRunTurnThreads/<size>_threads_<n>
+    # expect BenchmarkRunTurnThreads/<size>_threads_<n> or BenchmarkRemoteProcess_VaryWorkers/<n>_workers
     parts = base.split("/")
     if len(parts) >= 2 and parts[0].startswith("BenchmarkRunTurnThreads"):
         variant = parts[1]
@@ -48,6 +49,10 @@ def parse_threads_benchmark(name: str) -> tuple[str, int]:
             except ValueError:
                 workers = None
             return size, workers
+    if len(parts) >= 2 and parts[0].startswith("BenchmarkRemoteProcess_VaryWorkers"):
+        variant = parts[1]
+        if "_workers" in variant:
+            return "remote", int(variant.split("_workers", 1)[0])
     return ("unknown", None)
 
 
@@ -64,24 +69,41 @@ def save_barplot(df: pd.DataFrame, x: str, y: str, title: str, xlabel: str, file
 
 
 def main():
-    df = load_benchstat_csv("runturn.csv")
-    df = df[df["metric"] == "ms/op"].copy()
-    if df.empty:
-        raise SystemExit("No ms/op entries found in runturn.csv")
+    # Local benchmarks
+    df_local = load_benchstat_csv("runturn.csv")
+    df_local = df_local[df_local["metric"] == "ms/op"].copy()
+    if df_local.empty:
+        print("No ms/op entries found in runturn.csv")
+    else:
+        labels, workers = zip(*(parse_threads_benchmark(n) for n in df_local["name"]))
+        df_local["label"] = labels
+        df_local["workers"] = workers
+        df_local = df_local.dropna(subset=["workers"])
+        df_local["workers"] = df_local["workers"].astype(int)
+        df_local = df_local.rename(columns={"value": "time_ms"})
 
-    labels, workers = zip(*(parse_threads_benchmark(n) for n in df["name"]))
-    df["label"] = labels
-    df["workers"] = workers
-    df = df.dropna(subset=["workers"])
-    df["workers"] = df["workers"].astype(int)
-    df = df.rename(columns={"value": "time_ms"})
+        df_local.to_csv("runturn_all.csv", index=False)
+        for label, sub in df_local.groupby("label"):
+            sub = sub.sort_values("workers")
+            sub.to_csv(f"runturn_{label}.csv", index=False)
+            save_barplot(sub, "workers", "time_ms", f"RunTurn {label}", "Worker threads", f"runturn_{label}.png")
 
-    # One CSV per size plus a combined CSV, and a plot per size.
-    df.to_csv("runturn_all.csv", index=False)
-    for label, sub in df.groupby("label"):
-        sub = sub.sort_values("workers")
-        sub.to_csv(f"runturn_{label}.csv", index=False)
-        save_barplot(sub, "workers", "time_ms", f"RunTurn {label}", "Worker threads", f"runturn_{label}.png")
+    # Remote benchmarks (optional)
+    if os.path.exists("runturn_remote.csv"):
+        df_remote = load_benchstat_csv("runturn_remote.csv")
+        df_remote = df_remote[df_remote["metric"] == "ms/op"].copy()
+        if not df_remote.empty:
+            labels, workers = zip(*(parse_threads_benchmark(n) for n in df_remote["name"]))
+            df_remote["label"] = labels
+            df_remote["workers"] = workers
+            df_remote = df_remote.dropna(subset=["workers"])
+            df_remote["workers"] = df_remote["workers"].astype(int)
+            df_remote = df_remote.rename(columns={"value": "time_ms"})
+            df_remote.to_csv("runturn_remote_all.csv", index=False)
+            for label, sub in df_remote.groupby("label"):
+                sub = sub.sort_values("workers")
+                sub.to_csv(f"runturn_remote_{label}.csv", index=False)
+                save_barplot(sub, "workers", "time_ms", f"Remote {label}", "Worker threads", f"runturn_remote_{label}.png")
 
 
 if __name__ == "__main__":
