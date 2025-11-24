@@ -6,9 +6,9 @@ import (
 )
 
 // Usage:
-//   go test -bench RunTurnThreads -benchmem ./gol > runturn.out
-//   benchstat -format csv runturn.out > runturn.csv
-//   python gol/plot.py
+// > ENGINE_ADDR=<ip:6000> go test -bench BenchmarkRemoteProcess_VaryWorkers -benchmem ./gol > runturn_remote_vary.out
+// > benchstat -format csv runturn.out > runturn.csv
+// > python gol/plot.py
 // This mirrors the workflow used in the parallel implementation for plotting.
 
 // Benchmark runTurn throughput across thread counts and sizes, mirroring the
