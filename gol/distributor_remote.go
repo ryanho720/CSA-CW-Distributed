@@ -106,6 +106,13 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 				return
 			default:
 			}
+			worldMu.Lock()
+			paused := remotePaused
+			worldMu.Unlock()
+			if paused {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
 			var eventsResp TurnEventsResponse
 			err := client.Call(
 				EngineServiceName+".NextTurnEvents",
