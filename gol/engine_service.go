@@ -23,6 +23,18 @@ type EngineResponse struct {
 	SessionID string
 }
 
+// ControlRequest targets a specific session for pause/resume/stop/snapshot.
+type ControlRequest struct {
+	SessionID string
+}
+
+// SnapshotResponse returns the current world and metadata.
+type SnapshotResponse struct {
+	World          []byte
+	CompletedTurns int
+	Done           bool
+}
+
 // AliveCountRequest queries the progress of a running session
 type AliveCountRequest struct {
 	SessionID string
@@ -60,6 +72,9 @@ type engineSession struct {
 	Done           bool
 	events         []TurnEvent // queued turn events ready to be streamed to a controller
 	eventIndex     int
+	paused         bool
+	stopRequested  bool
+	world          [][]byte
 }
 
 // EngineService exposes RPC methods for processing Game of Life turns remotely
@@ -93,6 +108,7 @@ func (s *EngineService) Process(req EngineRequest, resp *EngineResponse) error {
 
 	initialAlive := len(worldToAliveCells(world))
 	s.setSession(sessionID, 0, initialAlive, false)
+	s.setWorld(sessionID, world)
 
 	// callback captures per-turn updates for streaming
 	callback := func(turn, alive int, cells []util.Cell) {
@@ -103,10 +119,38 @@ func (s *EngineService) Process(req EngineRequest, resp *EngineResponse) error {
 		}
 		s.appendEvent(sessionID, event)
 		s.setSession(sessionID, turn, alive, false)
+		s.updateWorld(sessionID, world)
 	}
 
-	finalWorld, finalAlive := evolveWorld(req.Params, world, callback)
-	s.setSession(sessionID, req.Params.Turns, finalAlive, true)
+	finalWorld, finalAlive := evolveWorld(req.Params, world, func(turn, alive int, cells []util.Cell) bool {
+		callback(turn, alive, cells)
+		for {
+			s.mu.RLock()
+			sess := s.sessions[sessionID]
+			paused := sess != nil && sess.paused
+			stop := sess != nil && sess.stopRequested
+			s.mu.RUnlock()
+			if stop {
+				return false
+			}
+			if !paused {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		return true
+	})
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	completed := req.Params.Turns
+	aliveCount := finalAlive
+	if sess != nil {
+		completed = sess.CompletedTurns
+		aliveCount = sess.AliveCount
+	}
+	s.mu.RUnlock()
+
+	s.setSession(sessionID, completed, aliveCount, true)
 
 	resp.World = worldToBytes(finalWorld)
 	return nil
@@ -164,6 +208,53 @@ func (s *EngineService) NextTurnEvents(req TurnEventsRequest, resp *TurnEventsRe
 	return nil
 }
 
+// Pause halts processing of a session until Resume is called.
+func (s *EngineService) Pause(req ControlRequest, _ *struct{}) error {
+	s.mu.Lock()
+	if sess, ok := s.sessions[req.SessionID]; ok {
+		sess.paused = true
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+// Resume continues processing of a paused session.
+func (s *EngineService) Resume(req ControlRequest, _ *struct{}) error {
+	s.mu.Lock()
+	if sess, ok := s.sessions[req.SessionID]; ok {
+		sess.paused = false
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+// Stop requests that a session terminate early.
+func (s *EngineService) Stop(req ControlRequest, _ *struct{}) error {
+	s.mu.Lock()
+	if sess, ok := s.sessions[req.SessionID]; ok {
+		sess.stopRequested = true
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+// Snapshot returns the current world for a session.
+func (s *EngineService) Snapshot(req ControlRequest, resp *SnapshotResponse) error {
+	s.mu.RLock()
+	sess, ok := s.sessions[req.SessionID]
+	s.mu.RUnlock()
+	if !ok || sess == nil {
+		return fmt.Errorf("session not found")
+	}
+
+	resp.CompletedTurns = sess.CompletedTurns
+	resp.Done = sess.Done
+	if sess.world != nil {
+		resp.World = worldToBytes(sess.world)
+	}
+	return nil
+}
+
 // updates the per session record
 func (s *EngineService) setSession(id string, turns, alive int, done bool) {
 	s.mu.Lock()
@@ -172,6 +263,8 @@ func (s *EngineService) setSession(id string, turns, alive int, done bool) {
 	if !ok {
 		session = &engineSession{}
 		s.sessions[id] = session
+		session.paused = false
+		session.stopRequested = false
 	}
 	if turns >= 0 {
 		session.CompletedTurns = turns
@@ -194,8 +287,29 @@ func (s *EngineService) appendEvent(id string, event TurnEvent) {
 	session.events = append(session.events, event)
 }
 
+func (s *EngineService) setWorld(id string, world [][]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[id]
+	if !ok {
+		session = &engineSession{}
+		s.sessions[id] = session
+	}
+	session.world = world
+}
+
+func (s *EngineService) updateWorld(id string, world [][]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[id]
+	if !ok {
+		return
+	}
+	session.world = world
+}
+
 // runs gol for p.Turns steps
-func evolveWorld(p Params, world [][]byte, status func(turn int, alive int, cells []util.Cell)) ([][]byte, int) {
+func evolveWorld(p Params, world [][]byte, status func(turn int, alive int, cells []util.Cell) bool) ([][]byte, int) {
 	width := p.ImageWidth
 	height := p.ImageHeight
 	next := makeWorld(width, height)
@@ -208,7 +322,9 @@ func evolveWorld(p Params, world [][]byte, status func(turn int, alive int, cell
 		changes, alive := runTurn(world, next, width, height, p.Threads, true)
 		world, next = next, world
 		if status != nil {
-			status(turn+1, alive, changes)
+			if ok := status(turn+1, alive, changes); !ok {
+				return world, alive
+			}
 		}
 	}
 

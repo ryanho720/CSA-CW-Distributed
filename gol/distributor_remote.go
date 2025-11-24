@@ -16,6 +16,8 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 	quitCh := make(chan struct{})
 	stopAlive := make(chan struct{})
 	var stopAliveOnce sync.Once
+	var userQuit bool
+	remotePaused := false
 
 	// load the initial board from io
 	filename := fmt.Sprintf("%vx%v", width, height)
@@ -74,10 +76,8 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 		processDone <- client.Call(EngineServiceName+".Process", req, &resp)
 	}()
 
-	// writes the current world snapshot out via IO
-	outputWorld := func(turn int) {
-		worldMu.Lock()
-		defer worldMu.Unlock()
+	// writes a world snapshot out via IO
+	outputWorld := func(turn int, snapshot [][]byte) {
 		if c.ioCommand == nil || c.ioFilename == nil || c.ioOutput == nil || c.ioIdle == nil {
 			return
 		}
@@ -86,39 +86,12 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 		c.ioFilename <- filename
 		for y := 0; y < height; y++ {
 			for x := 0; x < width; x++ {
-				c.ioOutput <- world[y][x]
+				c.ioOutput <- snapshot[y][x]
 			}
 		}
 		c.ioCommand <- ioCheckIdle
 		<-c.ioIdle
 		c.events <- ImageOutputComplete{CompletedTurns: turn, Filename: filename}
-	}
-
-	// allow key handling in remote mode (snapshot/save, quit)
-	if c.keyPresses != nil {
-		go func() {
-			for key := range c.keyPresses {
-				if key == 's' {
-					worldMu.Lock()
-					turn := currentTurn
-					worldMu.Unlock()
-					outputWorld(turn)
-				} else if key == 'q' || key == 'k' {
-					worldMu.Lock()
-					turn := currentTurn
-					worldMu.Unlock()
-					outputWorld(turn)
-					c.events <- StateChange{CompletedTurns: turn, NewState: Quitting}
-					close(quitCh)
-					stopAliveOnce.Do(func() { close(stopAlive) })
-					_ = client.Close()
-					return
-				} else if key == 'p' {
-					// pause/resume unsupported in remote mode
-				}
-				// other keys ignored in remote mode
-			}
-		}()
 	}
 
 	// closed when event is done
@@ -140,7 +113,9 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 				&eventsResp,
 			)
 			if err != nil {
-				log.Printf("[Remote] TurnEvents RPC failed: %v", err)
+				if !userQuit {
+					log.Printf("[Remote] TurnEvents RPC failed: %v", err)
+				}
 				return
 			}
 			for _, evt := range eventsResp.Events {
@@ -176,6 +151,88 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 		}
 	}()
 
+	// snapshot helper that asks the engine for the current world
+	snapshot := func() ([][]byte, int, error) {
+		var snapResp SnapshotResponse
+		err := client.Call(EngineServiceName+".Snapshot", ControlRequest{SessionID: sessionID}, &snapResp)
+		if err != nil {
+			return nil, 0, err
+		}
+		world, err := bytesToWorld(snapResp.World, width, height)
+		if err != nil {
+			return nil, 0, err
+		}
+		return world, snapResp.CompletedTurns, nil
+	}
+
+	callControl := func(method string) error {
+		return client.Call(EngineServiceName+"."+method, ControlRequest{SessionID: sessionID}, &struct{}{})
+	}
+
+	// allow key handling in remote mode (snapshot/save, quit, pause/resume)
+	if c.keyPresses != nil {
+		go func() {
+			for key := range c.keyPresses {
+				switch key {
+				case 's':
+					worldMu.Lock()
+					turn := currentTurn
+					worldMu.Unlock()
+					if snapWorld, snapTurn, err := snapshot(); err == nil {
+						outputWorld(snapTurn, snapWorld)
+					} else {
+						outputWorld(turn, world)
+					}
+				case 'q':
+					worldMu.Lock()
+					userQuit = true
+					worldMu.Unlock()
+					_ = callControl("Stop")
+					if snapWorld, snapTurn, err := snapshot(); err == nil {
+						outputWorld(snapTurn, snapWorld)
+					} else {
+						outputWorld(currentTurn, world)
+					}
+					c.events <- StateChange{CompletedTurns: currentTurn, NewState: Quitting}
+					close(quitCh)
+					stopAliveOnce.Do(func() { close(stopAlive) })
+					_ = client.Close()
+					return
+				case 'k':
+					worldMu.Lock()
+					userQuit = true
+					worldMu.Unlock()
+					_ = callControl("Stop")
+					if snapWorld, snapTurn, err := snapshot(); err == nil {
+						outputWorld(snapTurn, snapWorld)
+					} else {
+						outputWorld(currentTurn, world)
+					}
+					c.events <- StateChange{CompletedTurns: currentTurn, NewState: Quitting}
+					close(quitCh)
+					stopAliveOnce.Do(func() { close(stopAlive) })
+					_ = client.Close()
+					return
+				case 'p':
+					worldMu.Lock()
+					turn := currentTurn
+					worldMu.Unlock()
+					if !remotePaused {
+						if err := callControl("Pause"); err == nil {
+							remotePaused = true
+							fmt.Printf("Paused at turn %d\n", turn)
+						}
+					} else {
+						if err := callControl("Resume"); err == nil {
+							remotePaused = false
+							fmt.Println("Continuing")
+						}
+					}
+				}
+			}
+		}()
+	}
+
 	// ticker triggers periodic alive count rpcs
 	ticker := time.NewTicker(2 * time.Second)
 	aliveDone := make(chan struct{})
@@ -194,7 +251,9 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 					&aliveResp,
 				)
 				if err != nil {
-					log.Printf("[Remote] AliveCount RPC failed: %v", err)
+					if !userQuit {
+						log.Printf("[Remote] AliveCount RPC failed: %v", err)
+					}
 					return
 				}
 				if aliveResp.CompletedTurns >= 0 {
@@ -220,10 +279,12 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 	<-aliveDone
 	<-eventsDone
 	if err != nil {
-		log.Printf("[Remote] Engine RPC failed: %v", err)
-		c.events <- StateChange{CompletedTurns: 0, NewState: Quitting}
-		close(c.events)
-		return
+		if !userQuit {
+			log.Printf("[Remote] Engine RPC failed: %v", err)
+			c.events <- StateChange{CompletedTurns: 0, NewState: Quitting}
+			close(c.events)
+			return
+		}
 	}
 
 	// rebuilds the final board the engine returned
