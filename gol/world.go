@@ -11,6 +11,7 @@ type workerResult struct {
 	alive   int
 }
 
+// makeWorld allocates an empty h*w grid
 func makeWorld(width, height int) [][]byte {
 	world := make([][]byte, height)
 	for y := range world {
@@ -19,6 +20,7 @@ func makeWorld(width, height int) [][]byte {
 	return world
 }
 
+// worldToBytes flattens a 2D grid into a 1D slice
 func worldToBytes(world [][]byte) []byte {
 	height := len(world)
 	if height == 0 {
@@ -34,6 +36,7 @@ func worldToBytes(world [][]byte) []byte {
 	return data
 }
 
+// bytesToWorld reconstructs a 2D grid from a flat slice
 func bytesToWorld(data []byte, width, height int) ([][]byte, error) {
 	expected := width * height
 	if len(data) != expected {
@@ -48,6 +51,7 @@ func bytesToWorld(data []byte, width, height int) ([][]byte, error) {
 	return world, nil
 }
 
+// returns the coordinates of live cells
 func worldToAliveCells(world [][]byte) []util.Cell {
 	height := len(world)
 	if height == 0 {
@@ -65,6 +69,7 @@ func worldToAliveCells(world [][]byte) []util.Cell {
 	return alive
 }
 
+// advances the board one generation using workerCount goroutines
 func runTurn(world, next [][]byte, width, height, threads int, collectChanges bool) ([]util.Cell, int) {
 	workerCount := threads
 	if workerCount < 1 {
@@ -103,6 +108,7 @@ func runTurn(world, next [][]byte, width, height, threads int, collectChanges bo
 	return changes, totalAlive
 }
 
+// processStrip updates a vertical strip of rows and optionally records changes
 func processStrip(world, next [][]byte, width, height, startY, endY int, collectChanges bool) workerResult {
 	var changes []util.Cell
 	if collectChanges {
@@ -111,34 +117,21 @@ func processStrip(world, next [][]byte, width, height, startY, endY int, collect
 	alive := 0
 	for y := startY; y < endY; y++ {
 		for x := 0; x < width; x++ {
-			xp := (x + 1) % width
-			xn := x - 1
-			yn := y - 1
-			yp := (y + 1) % height
-			if xn < 0 {
-				xn = width + xn
-			}
-			if yn < 0 {
-				yn = height + yn
-			}
-			sum := int(world[y][xp]) +
-				int(world[y][xn]) +
-				int(world[yp][xp]) +
-				int(world[yp][xn]) +
-				int(world[yp][x]) +
-				int(world[yn][xp]) +
-				int(world[yn][xn]) +
-				int(world[yn][x])
+			sum := countNeighbours(world, width, height, x, y)
 			current := world[y][x]
 			var nextVal byte
 			switch {
-			case sum < 510 && current == 255:
+			case sum < 2 && current == 255:
 				nextVal = 0
-			case sum > 765 && current == 255:
+			case sum > 3 && current == 255:
 				nextVal = 0
-			case sum == 765 && current == 0:
-				nextVal = 255
+			case sum == 3:
+				nextVal = current
+				if current == 0 {
+					nextVal = 255
+				}
 			default:
+				// sum == 2, current stays unchanged
 				nextVal = current
 			}
 			next[y][x] = nextVal
@@ -153,6 +146,7 @@ func processStrip(world, next [][]byte, width, height, startY, endY int, collect
 	return workerResult{changes: changes, alive: alive}
 }
 
+// countNeighbours counts live neighbours around (x, y) with wraparound
 func countNeighbours(world [][]byte, width, height, x, y int) int {
 	xn := x - 1
 	if xn < 0 {

@@ -2,7 +2,6 @@ package gol
 
 import (
 	"fmt"
-	"log"
 	"time"
 
 	"uk.ac.bris.cs/gameoflife/util"
@@ -18,17 +17,19 @@ type distributorChannels struct {
 	keyPresses <-chan int32 // unicode character
 }
 
-// distributor divides the work between workers and interacts with other goroutines.
+// coordination of io/ui goroutines & work distribution
 func distributor(p Params, c distributorChannels) {
+	// calls EngineAddr if not empty
+	// otherwise stays local
 	if p.EngineAddr != "" {
 		runRemoteDistributor(p, c)
 		return
 	}
 
-	log.Fatalf("Local Game of Life execution is temporarily disabled. Please provide -engine or GOL_ENGINE_ADDR to run via the remote server.")
-
 	width, height := p.ImageWidth, p.ImageHeight
 
+	// world holds the current state
+	// nextWorld is the scratch buffer workers write into
 	world := makeWorld(width, height)
 	nextWorld := makeWorld(width, height)
 
@@ -38,9 +39,11 @@ func distributor(p Params, c distributorChannels) {
 	currentAlive := 0
 
 	if c.ioCommand != nil && c.ioFilename != nil && c.ioInput != nil {
+		// tells the io goroutine to read the starting board into the world
 		filename := fmt.Sprintf("%vx%v", width, height)
 		c.ioCommand <- ioInput
 		c.ioFilename <- filename
+		// reads initial board from io and records which cells start alive
 		for y := 0; y < height; y++ {
 			for x := 0; x < width; x++ {
 				val := <-c.ioInput
@@ -50,6 +53,7 @@ func distributor(p Params, c distributorChannels) {
 				}
 			}
 		}
+		// counts how many cells are alive in the starting board and reports them
 		currentAlive = len(initialAlive)
 		if len(initialAlive) > 0 {
 			c.events <- CellsFlipped{CompletedTurns: turn, Cells: append([]util.Cell(nil), initialAlive...)}
@@ -64,11 +68,14 @@ func distributor(p Params, c distributorChannels) {
 	paused := false
 	quit := false
 
+	// periodic ticker to emit AliveCellsCount events while running/paused
 	aliveTicker := time.NewTicker(2 * time.Second)
 	defer aliveTicker.Stop()
 
+	// initialisation
 	lastOutputTurn := -1
 
+	// sends grid to goroutine so it could be written out as an image
 	outputWorld := func() {
 		if c.ioCommand == nil || c.ioFilename == nil || c.ioOutput == nil || c.ioIdle == nil {
 			return
@@ -87,6 +94,7 @@ func distributor(p Params, c distributorChannels) {
 		lastOutputTurn = turn
 	}
 
+	// handleKey changes state (pause/save/quit) based on keyboard input
 	handleKey := func(key int32) {
 		switch key {
 		case 'p':
@@ -107,6 +115,7 @@ func distributor(p Params, c distributorChannels) {
 		}
 	}
 
+	// runs until the requested number of turns or until quit
 	for turn < p.Turns && !quit {
 		if paused {
 			select {
@@ -145,6 +154,7 @@ func distributor(p Params, c distributorChannels) {
 		default:
 		}
 
+		// run a single generation with the configured worker count
 		changes, alive := runTurn(world, nextWorld, width, height, p.Threads, true)
 
 		if len(changes) > 0 {
@@ -157,10 +167,13 @@ func distributor(p Params, c distributorChannels) {
 		c.events <- TurnComplete{CompletedTurns: turn}
 	}
 
+	// if the current turn hasn't been saved
+	// call outputWorld() to save the board before exiting
 	if lastOutputTurn != turn {
 		outputWorld()
 	}
 
+	// final state and shutdown notifications
 	finalAliveCells := worldToAliveCells(world)
 	c.events <- FinalTurnComplete{
 		CompletedTurns: turn,

@@ -10,44 +10,44 @@ import (
 
 const EngineServiceName = "GolEngine"
 
-// EngineRequest is sent by the controller to request processing of turns.
+// EngineRequest is sent by the controller to request processing of turns
 type EngineRequest struct {
 	Params    Params
 	World     []byte
 	SessionID string
 }
 
-// EngineResponse contains the final world after processing.
+// EngineResponse contains the final world after processing
 type EngineResponse struct {
 	World     []byte
 	SessionID string
 }
 
-// AliveCountRequest queries the progress of a running session.
+// AliveCountRequest queries the progress of a running session
 type AliveCountRequest struct {
 	SessionID string
 }
 
-// AliveCountResponse contains the number of completed turns and alive cells.
+// AliveCountResponse contains the number of completed turns and alive cells
 type AliveCountResponse struct {
 	CompletedTurns int
 	AliveCount     int
 	Done           bool
 }
 
-// TurnEventsRequest asks for new turn events for a session.
+// TurnEventsRequest asks for new turn events for a session
 type TurnEventsRequest struct {
 	SessionID string
 	MaxEvents int
 }
 
-// TurnEventsResponse contains streamed turn events.
+// TurnEventsResponse contains streamed turn events
 type TurnEventsResponse struct {
 	Events []TurnEvent
 	Done   bool
 }
 
-// TurnEvent represents cells flipped for a turn and the completed turn count.
+// TurnEvent represents cells flipped for a turn and the completed turn count
 type TurnEvent struct {
 	CellsCompletedTurns int
 	CompletedTurns      int
@@ -58,27 +58,28 @@ type engineSession struct {
 	CompletedTurns int
 	AliveCount     int
 	Done           bool
-	events         []TurnEvent
+	events         []TurnEvent // queued turn events ready to be streamed to a controller
 	eventIndex     int
 }
 
-// EngineService exposes RPC methods for processing Game of Life turns remotely.
+// EngineService exposes RPC methods for processing Game of Life turns remotely
 type EngineService struct {
 	mu       sync.RWMutex
 	sessions map[string]*engineSession
 }
 
-// NewEngineService constructs a new EngineService.
+// NewEngineService constructs a new EngineService
 func NewEngineService() *EngineService {
 	return &EngineService{
 		sessions: make(map[string]*engineSession),
 	}
 }
 
-// Process evolves the supplied world for Params.Turns turns.
+// process evolves the supplied world for Params.Turns turns
 func (s *EngineService) Process(req EngineRequest, resp *EngineResponse) error {
 	width := req.Params.ImageWidth
 	height := req.Params.ImageHeight
+	// decode incoming flat world
 	world, err := bytesToWorld(req.World, width, height)
 	if err != nil {
 		return err
@@ -93,6 +94,7 @@ func (s *EngineService) Process(req EngineRequest, resp *EngineResponse) error {
 	initialAlive := len(worldToAliveCells(world))
 	s.setSession(sessionID, 0, initialAlive, false)
 
+	// callback captures per-turn updates for streaming
 	callback := func(turn, alive int, cells []util.Cell) {
 		event := TurnEvent{
 			CellsCompletedTurns: turn - 1,
@@ -110,7 +112,7 @@ func (s *EngineService) Process(req EngineRequest, resp *EngineResponse) error {
 	return nil
 }
 
-// AliveCount returns the latest known alive cell count for a session.
+// AliveCount returns the latest known alive cell count for a session
 func (s *EngineService) AliveCount(req AliveCountRequest, resp *AliveCountResponse) error {
 	s.mu.RLock()
 	session, ok := s.sessions[req.SessionID]
@@ -142,6 +144,7 @@ func (s *EngineService) NextTurnEvents(req TurnEventsRequest, resp *TurnEventsRe
 		req.MaxEvents = 4
 	}
 
+	// drain up to MaxEvents from the buffered event queue
 	if session.eventIndex < len(session.events) {
 		end := session.eventIndex + req.MaxEvents
 		if end > len(session.events) {
@@ -150,7 +153,7 @@ func (s *EngineService) NextTurnEvents(req TurnEventsRequest, resp *TurnEventsRe
 		resp.Events = append(resp.Events, session.events[session.eventIndex:end]...)
 		session.eventIndex = end
 
-		// Trim events to avoid unbounded growth.
+		// trim events to avoid unbounded growth
 		if session.eventIndex > 0 && session.eventIndex == len(session.events) {
 			session.events = session.events[:0]
 			session.eventIndex = 0
@@ -161,6 +164,7 @@ func (s *EngineService) NextTurnEvents(req TurnEventsRequest, resp *TurnEventsRe
 	return nil
 }
 
+// updates the per session record
 func (s *EngineService) setSession(id string, turns, alive int, done bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -178,6 +182,7 @@ func (s *EngineService) setSession(id string, turns, alive int, done bool) {
 	}
 }
 
+// records a turn event for a session
 func (s *EngineService) appendEvent(id string, event TurnEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -189,6 +194,7 @@ func (s *EngineService) appendEvent(id string, event TurnEvent) {
 	session.events = append(session.events, event)
 }
 
+// runs gol for p.Turns steps
 func evolveWorld(p Params, world [][]byte, status func(turn int, alive int, cells []util.Cell)) ([][]byte, int) {
 	width := p.ImageWidth
 	height := p.ImageHeight
