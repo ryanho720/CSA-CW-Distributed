@@ -221,11 +221,13 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 						if err := callControl("Pause"); err == nil {
 							remotePaused = true
 							fmt.Printf("Paused at turn %d\n", turn)
+							c.events <- StateChange{CompletedTurns: turn, NewState: Paused}
 						}
 					} else {
 						if err := callControl("Resume"); err == nil {
 							remotePaused = false
 							fmt.Println("Continuing")
+							c.events <- StateChange{CompletedTurns: turn, NewState: Executing}
 						}
 					}
 				}
