@@ -5,6 +5,12 @@ import (
 	"testing"
 )
 
+// Usage:
+//   go test -bench RunTurnThreads -benchmem ./gol > runturn.out
+//   benchstat -format csv runturn.out > runturn.csv
+//   python gol/plot.py
+// This mirrors the workflow used in the parallel implementation for plotting.
+
 // Benchmark runTurn throughput across thread counts and sizes, mirroring the
 // parallel implementation comparison.
 func BenchmarkRunTurnThreads(b *testing.B) {
