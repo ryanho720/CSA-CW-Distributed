@@ -1,0 +1,36 @@
+goos: darwin
+goarch: arm64
+pkg: uk.ac.bris.cs/gameoflife/gol
+cpu: Apple M1
+,runturn_remote_vary.out,
+,sec/op,CI
+RemoteProcess_VaryWorkers/1_workers-8,0.14293892000000002,1%
+RemoteProcess_VaryWorkers/2_workers-8,0.143001508,26%
+RemoteProcess_VaryWorkers/4_workers-8,0.14263349749999998,1%
+RemoteProcess_VaryWorkers/8_workers-8,0.1434746185,1%
+RemoteProcess_VaryWorkers/16_workers-8,0.14373195300000002,4%
+RemoteProcess_VaryWorkers/32_workers-8,0.143585764,1%
+RemoteProcess_VaryWorkers/64_workers-8,0.14419791650000002,1%
+geomean,0.14336544546211064,
+
+,runturn_remote_vary.out,
+,B/op,CI
+RemoteProcess_VaryWorkers/1_workers-8,9650,0%
+RemoteProcess_VaryWorkers/2_workers-8,9651,0%
+RemoteProcess_VaryWorkers/4_workers-8,9657,1%
+RemoteProcess_VaryWorkers/8_workers-8,9657,0%
+RemoteProcess_VaryWorkers/16_workers-8,9657,1%
+RemoteProcess_VaryWorkers/32_workers-8,9674,1%
+RemoteProcess_VaryWorkers/64_workers-8,9670,0%
+geomean,9659.424862826774,
+
+,runturn_remote_vary.out,
+,allocs/op,CI
+RemoteProcess_VaryWorkers/1_workers-8,14,0%
+RemoteProcess_VaryWorkers/2_workers-8,14,7%
+RemoteProcess_VaryWorkers/4_workers-8,14,7%
+RemoteProcess_VaryWorkers/8_workers-8,14,0%
+RemoteProcess_VaryWorkers/16_workers-8,14,7%
+RemoteProcess_VaryWorkers/32_workers-8,14.5,3%
+RemoteProcess_VaryWorkers/64_workers-8,14,7%
+geomean,14.070358848336387,

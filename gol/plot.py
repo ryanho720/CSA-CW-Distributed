@@ -30,11 +30,26 @@ def load_benchstat_csv(path: str) -> pd.DataFrame:
                 except ValueError:
                     continue
                 records.append({"name": row[0], "metric": metric, "value": value})
-    return pd.DataFrame(records)
+    df = pd.DataFrame(records)
+    # normalize metrics to ms/op
+    if not df.empty:
+        def to_ms(row):
+            if row["metric"] == "ms/op":
+                return row["value"], "ms/op"
+            if row["metric"] == "sec/op":
+                return row["value"] * 1000.0, "ms/op"
+            if row["metric"] == "ns/op":
+                return row["value"] / 1_000_000.0, "ms/op"
+            return row["value"], row["metric"]
+
+        converted = df.apply(lambda r: pd.Series(to_ms(r), index=["value", "metric"]), axis=1)
+        df["value"] = converted["value"]
+        df["metric"] = converted["metric"]
+    return df
 
 
 def parse_threads_benchmark(name: str) -> tuple[str, int]:
-    """Extract (label, workers) from BenchmarkRunTurnThreads/64x64_threads_4-8 or BenchmarkRemoteProcess_VaryWorkers/4_workers-8."""
+    """Extract (label, workers) from local or remote vary-workers benchmarks."""
     base = name
     if "-" in base:
         base = base.rsplit("-", 1)[0]  # drop "-8"
@@ -49,7 +64,7 @@ def parse_threads_benchmark(name: str) -> tuple[str, int]:
             except ValueError:
                 workers = None
             return size, workers
-    if len(parts) >= 2 and parts[0].startswith("BenchmarkRemoteProcess_VaryWorkers"):
+    if len(parts) >= 2 and (parts[0].startswith("BenchmarkRemoteProcess_VaryWorkers") or parts[0].startswith("RemoteProcess_VaryWorkers")):
         variant = parts[1]
         if "_workers" in variant:
             return "remote", int(variant.split("_workers", 1)[0])
@@ -70,23 +85,26 @@ def save_barplot(df: pd.DataFrame, x: str, y: str, title: str, xlabel: str, file
 
 def main():
     # Local benchmarks
-    df_local = load_benchstat_csv("runturn.csv")
-    df_local = df_local[df_local["metric"] == "ms/op"].copy()
-    if df_local.empty:
-        print("No ms/op entries found in runturn.csv")
-    else:
-        labels, workers = zip(*(parse_threads_benchmark(n) for n in df_local["name"]))
-        df_local["label"] = labels
-        df_local["workers"] = workers
-        df_local = df_local.dropna(subset=["workers"])
-        df_local["workers"] = df_local["workers"].astype(int)
-        df_local = df_local.rename(columns={"value": "time_ms"})
+    if os.path.exists("runturn.csv"):
+        df_local = load_benchstat_csv("runturn.csv")
+        df_local = df_local[df_local["metric"] == "ms/op"].copy()
+        if df_local.empty:
+            print("No ms/op entries found in runturn.csv")
+        else:
+            labels, workers = zip(*(parse_threads_benchmark(n) for n in df_local["name"]))
+            df_local["label"] = labels
+            df_local["workers"] = workers
+            df_local = df_local.dropna(subset=["workers"])
+            df_local["workers"] = df_local["workers"].astype(int)
+            df_local = df_local.rename(columns={"value": "time_ms"})
 
-        df_local.to_csv("runturn_all.csv", index=False)
-        for label, sub in df_local.groupby("label"):
-            sub = sub.sort_values("workers")
-            sub.to_csv(f"runturn_{label}.csv", index=False)
-            save_barplot(sub, "workers", "time_ms", f"RunTurn {label}", "Worker threads", f"runturn_{label}.png")
+            df_local.to_csv("runturn_all.csv", index=False)
+            for label, sub in df_local.groupby("label"):
+                sub = sub.sort_values("workers")
+                sub.to_csv(f"runturn_{label}.csv", index=False)
+                save_barplot(sub, "workers", "time_ms", f"RunTurn {label}", "Worker threads", f"runturn_{label}.png")
+    else:
+        print("runturn.csv not found; skipping local plots")
 
     # Remote benchmarks (optional)
     if os.path.exists("runturn_remote.csv"):

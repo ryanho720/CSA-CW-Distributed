@@ -8,6 +8,20 @@ import (
 	"time"
 )
 
+// Usage:
+// > ENGINE_ADDR=<host:port> go test -bench BenchmarkRemoteProcess_VaryWorkers -benchmem -count 6 ./gol > runturn_remote_vary.out
+// > benchstat -format csv runturn_remote_vary.out > runturn_remote.csv
+// > python3 gol/plot.py
+// This mirrors the workflow used in the parallel implementation for plotting.
+
+// cd /Users/ryanho/Documents/GitHub/CSA-CW-Distributed
+// export MPLCONFIGDIR=/tmp/mplcache
+// benchstat -format csv runturn_remote_vary.out > runturn_remote.csv
+// python3 gol/plot.py
+
+// Benchmark runTurn throughput across thread counts and sizes, mirroring the
+// parallel implementation comparison.
+
 // benchmark the remote engine's Process RPC
 // requires ENGINE_ADDR to be set (e.g., ENGINE_ADDR=<ip>) and the engine running
 func BenchmarkRemoteProcess(b *testing.B) {
@@ -22,11 +36,11 @@ func BenchmarkRemoteProcess(b *testing.B) {
 	}
 	defer client.Close()
 
-	width, height := 64, 64
+	width, height := 512, 512
 	world := makeWorld(width, height)
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
-			if (x+y)%2 == 0 {
+			if (x*31+y*17)%100 < 5 { // sparse pattern to match local benchmarks
 				world[y][x] = 255
 			}
 		}
@@ -67,11 +81,11 @@ func BenchmarkRemoteProcess_VaryWorkers(b *testing.B) {
 	}
 	defer client.Close()
 
-	width, height := 64, 64
+	width, height := 512, 512
 	world := makeWorld(width, height)
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
-			if (x+y)%2 == 0 {
+			if (x*31+y*17)%100 < 5 { // sparse pattern to match local benchmarks
 				world[y][x] = 255
 			}
 		}
@@ -79,7 +93,7 @@ func BenchmarkRemoteProcess_VaryWorkers(b *testing.B) {
 
 	baseReq := EngineRequest{
 		Params: Params{
-			Turns:       6,
+			Turns:       1, // single turn per RPC to align with local per-turn timings
 			ImageWidth:  width,
 			ImageHeight: height,
 		},
