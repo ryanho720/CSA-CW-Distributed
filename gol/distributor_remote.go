@@ -219,13 +219,31 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 					worldMu.Unlock()
 					if !remotePaused {
 						if err := callControl("Pause"); err == nil {
+							if snapWorld, snapTurn, err := snapshot(); err == nil {
+								worldMu.Lock()
+								world = snapWorld
+								currentTurn = snapTurn
+								worldMu.Unlock()
+								turn = snapTurn
+							}
+							worldMu.Lock()
 							remotePaused = true
+							worldMu.Unlock()
 							fmt.Printf("Paused at turn %d\n", turn)
 							c.events <- StateChange{CompletedTurns: turn, NewState: Paused}
 						}
 					} else {
 						if err := callControl("Resume"); err == nil {
+							if snapWorld, snapTurn, err := snapshot(); err == nil {
+								worldMu.Lock()
+								world = snapWorld
+								currentTurn = snapTurn
+								worldMu.Unlock()
+								turn = snapTurn
+							}
+							worldMu.Lock()
 							remotePaused = false
+							worldMu.Unlock()
 							fmt.Println("Continuing")
 							c.events <- StateChange{CompletedTurns: turn, NewState: Executing}
 						}
@@ -246,6 +264,12 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 			case <-quitCh:
 				return
 			case <-ticker.C:
+				worldMu.Lock()
+				paused := remotePaused
+				worldMu.Unlock()
+				if paused {
+					continue
+				}
 				var aliveResp AliveCountResponse
 				err := client.Call(
 					EngineServiceName+".AliveCount",
