@@ -40,6 +40,40 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 	// sends a StateChange to mark the simulation as Executing at turn 0
 	c.events <- StateChange{CompletedTurns: 0, NewState: Executing}
 
+	// connect to the remote engine rpc service
+	client, err := rpc.Dial("tcp", p.EngineAddr)
+	// if the dial fails, signals the ui with a StateChange to Quitting at turn 0
+	if err != nil {
+		log.Printf("[Remote] Failed to connect to engine: %v", err)
+		c.events <- StateChange{CompletedTurns: 0, NewState: Quitting}
+		close(c.events)
+		return
+	}
+	defer client.Close()
+
+	// for tracking and streaming events for the correct session
+	sessionID := fmt.Sprintf("controller-%d", time.Now().UnixNano())
+
+	// building the payload sent to the remote engine's process rpc
+	req := EngineRequest{
+		Params: Params{
+			Turns:       p.Turns,
+			Threads:     p.Threads,
+			ImageWidth:  p.ImageWidth,
+			ImageHeight: p.ImageHeight,
+		},
+		World:     worldToBytes(world),
+		SessionID: sessionID,
+	}
+
+	// holds the rpc response & create a buffer to catch the result
+	var resp EngineResponse
+	processDone := make(chan error, 1)
+	// fire off the long-running Process RPC
+	go func() {
+		processDone <- client.Call(EngineServiceName+".Process", req, &resp)
+	}()
+
 	// writes the current world snapshot out via IO
 	outputWorld := func(turn int) {
 		worldMu.Lock()
@@ -86,40 +120,6 @@ func runRemoteDistributor(p Params, c distributorChannels) {
 			}
 		}()
 	}
-
-	// connect to the remote engine rpc service
-	client, err := rpc.Dial("tcp", p.EngineAddr)
-	// if the dial fails, signals the ui with a StateChange to Quitting at turn 0
-	if err != nil {
-		log.Printf("[Remote] Failed to connect to engine: %v", err)
-		c.events <- StateChange{CompletedTurns: 0, NewState: Quitting}
-		close(c.events)
-		return
-	}
-	defer client.Close()
-
-	// for tracking and streaming events for the correct session
-	sessionID := fmt.Sprintf("controller-%d", time.Now().UnixNano())
-
-	// building the payload sent to the remote engine's process rpc
-	req := EngineRequest{
-		Params: Params{
-			Turns:       p.Turns,
-			Threads:     p.Threads,
-			ImageWidth:  p.ImageWidth,
-			ImageHeight: p.ImageHeight,
-		},
-		World:     worldToBytes(world),
-		SessionID: sessionID,
-	}
-
-	// holds the rpc response & create a buffer to catch the result
-	var resp EngineResponse
-	processDone := make(chan error, 1)
-	// fire off the long-running Process RPC
-	go func() {
-		processDone <- client.Call(EngineServiceName+".Process", req, &resp)
-	}()
 
 	// closed when event is done
 	eventsDone := make(chan struct{})
