@@ -11,13 +11,9 @@ import (
 // Usage:
 // > ENGINE_ADDR=<host:port> go test -bench BenchmarkRemoteProcess_VaryWorkers -benchmem -count 6 ./gol > runturn_remote_vary.out
 // > benchstat -format csv runturn_remote_vary.out > runturn_remote.csv
+// OR > benchstat -format csv runturn.out > runturn.csv
 // > python3 gol/plot.py
 // This mirrors the workflow used in the parallel implementation for plotting.
-
-// cd /Users/ryanho/Documents/GitHub/CSA-CW-Distributed
-// export MPLCONFIGDIR=/tmp/mplcache
-// benchstat -format csv runturn_remote_vary.out > runturn_remote.csv
-// python3 gol/plot.py
 
 // Benchmark runTurn throughput across thread counts and sizes, mirroring the
 // parallel implementation comparison.

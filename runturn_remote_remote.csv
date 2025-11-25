@@ -1,8 +1,0 @@
-name,metric,time_ms,label,workers
-RemoteProcess_VaryWorkers/1_workers-8,ms/op,142.93892000000002,remote,1
-RemoteProcess_VaryWorkers/2_workers-8,ms/op,143.001508,remote,2
-RemoteProcess_VaryWorkers/4_workers-8,ms/op,142.63349749999998,remote,4
-RemoteProcess_VaryWorkers/8_workers-8,ms/op,143.47461850000002,remote,8
-RemoteProcess_VaryWorkers/16_workers-8,ms/op,143.73195300000003,remote,16
-RemoteProcess_VaryWorkers/32_workers-8,ms/op,143.585764,remote,32
-RemoteProcess_VaryWorkers/64_workers-8,ms/op,144.19791650000002,remote,64
